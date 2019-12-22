@@ -59,12 +59,40 @@ public class MatchMaker {
 	
 	// sendSubConfirmation
 	protected void sendSubConfirmation(PeerData pd) throws IOException {
+		System.out.println(String.format("Sending sub confirm to %s", pd.getAddress()));
 		sendBuf.clear();
 		sendBuf.putInt(Shared.MSG_SUBBED);
+		// tell the client what his public ip:port is
+		InetSocketAddress addr = (InetSocketAddress) pd.getAddress();
+		sendBuf.put(addr.getAddress().getAddress());
+		sendBuf.putInt(addr.getPort());
 		sendBuf.flip();
 		
-		
 		channel.send(sendBuf, pd.getAddress());
+	}
+	
+	// broadcastPeerInfo
+	protected void broadcastPeerInfo() throws IOException {
+		// build info first
+		int numPeers = peers.size();
+		
+		sendBuf.clear();
+		sendBuf.putInt(Shared.MSG_ADD_PEER);
+		sendBuf.putInt(numPeers);
+		// for every peers, send 4 tuples of ip + port
+		for (PeerData pd : peers.values()) {
+			InetSocketAddress addr = (InetSocketAddress) pd.getAddress();
+			
+			sendBuf.put(addr.getAddress().getAddress());
+			sendBuf.putInt(addr.getPort());
+		}
+		sendBuf.flip();
+		
+		// now send it to everyone
+		for (PeerData pd : peers.values()) {
+			channel.send(sendBuf, pd.getAddress());
+			sendBuf.flip();
+		}
 	}
 	
 	// send ping response
@@ -87,9 +115,13 @@ public class MatchMaker {
 	}
 	
 	// handle socket message
-	public void handleDatagram(SocketAddress addr, ByteBuffer bb) {
+	protected void handleDatagram(SocketAddress addr, ByteBuffer bb) {
+		InetSocketAddress srcAddr = (InetSocketAddress) addr;
 		
-		System.out.println(String.format("Got datagram from: %s, %d bytes", addr, bb.limit()));
+		// only log if it's new?
+		if (!peers.containsKey(srcAddr)) {
+			System.out.println(String.format("Got datagram from: %s:%d, %d bytes", srcAddr.getAddress().getHostAddress(), srcAddr.getPort(), bb.limit()));
+		}
 		
 		// depending on message, we migth do something
 		int msgId = bb.getInt();
@@ -105,9 +137,13 @@ public class MatchMaker {
 					pd = new PeerData(addr);
 					pd.setSubStatus(Shared.STAT_SUBSCRIBED);
 					
+					// add to list of clients
+					peers.put(addr, pd);
+					
 					// log
 					System.out.println(String.format("Got sub from %s", addr));
 				} 
+				System.out.println(String.format("Sub request from %s", addr));
 				// always send confirmation (IDEMPOTENCY)
 				sendSubConfirmation(pd);
 				break;
@@ -126,6 +162,7 @@ public class MatchMaker {
 				if (pd != null) {
 					pd.measureRTT();
 				}
+				break;
 
 			default:
 				break;
@@ -149,9 +186,11 @@ public class MatchMaker {
 		for (PeerData pd : peers.values()) {
 			// if it's subbed and not waiting for ping,
 			// ping it
-			if (pd.getSubStatus() == Shared.STAT_SUBSCRIBED) {
+			if (pd.getSubStatus() == Shared.STAT_SUBSCRIBED && !pd.isWaitingForPong()) {
 				channel.send(sendBuf, pd.getAddress());
+				pd.startPing();
 //				sendBuf.reset();
+				sendBuf.flip();
 			}
 		}
 		
@@ -166,6 +205,9 @@ public class MatchMaker {
 				}
 			}
 			System.out.print("\r=================RTT DUMP END===========================\n");
+			
+			// broadcast peer info
+			broadcastPeerInfo();
 		}
 	}
 	

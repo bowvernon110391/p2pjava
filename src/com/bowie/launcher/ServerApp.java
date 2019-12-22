@@ -1,4 +1,6 @@
-package com.bowie.app;
+package com.bowie.launcher;
+
+import com.bowie.app.MatchMaker;
 
 public class ServerApp {
 
@@ -6,8 +8,8 @@ public class ServerApp {
 		// TODO Auto-generated method stub
 		final int DEFAULT_PORT = 7676;
 		int port = DEFAULT_PORT;
-		if (args.length > 1) {
-			port = Integer.parseInt(args[1]);
+		if (args.length >= 1) {
+			port = Integer.parseInt(args[0]);
 		}
 		
 		new MatchMaker(port).startSession();
